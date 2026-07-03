@@ -152,7 +152,7 @@ public class MainWindowViewModel : ViewModelBase
                     rule.ProxyConfigId = nativeProxyId;
 
                     uint ruleId = _proxyService.AddRule(
-                        rule.ProcessName, rule.TargetHosts, rule.TargetPorts,
+                        rule.ProcessName, rule.TargetHosts, rule.TargetPorts, rule.TargetDomains,
                         rule.Protocol, rule.Action, nativeProxyId);
 
                     if (ruleId > 0)
@@ -447,7 +447,7 @@ public class MainWindowViewModel : ViewModelBase
                     if (_proxyService != null)
                     {
                         uint ruleId = _proxyService.AddRule(
-                            rule.ProcessName, rule.TargetHosts, rule.TargetPorts,
+                            rule.ProcessName, rule.TargetHosts, rule.TargetPorts, rule.TargetDomains,
                             rule.Protocol, rule.Action, rule.ProxyConfigId);
                         if (ruleId > 0)
                         {
@@ -583,7 +583,7 @@ public class MainWindowViewModel : ViewModelBase
 
             if (_proxyService != null)
             {
-                var ruleId = _proxyService.AddRule(NewProcessName, "*", "*", "TCP", NewProxyAction);
+                var ruleId = _proxyService.AddRule(NewProcessName, "*", "*", "*", "TCP", NewProxyAction);
                 if (ruleId > 0)
                 {
                     rule.RuleId = ruleId;
@@ -1109,6 +1109,7 @@ public class MainWindowViewModel : ViewModelBase
                         ProcessName = rc.ProcessName,
                         TargetHosts = ValidationHelper.DefaultIfEmpty(rc.TargetHosts),
                         TargetPorts = ValidationHelper.DefaultIfEmpty(rc.TargetPorts),
+                        TargetDomains = ValidationHelper.DefaultIfEmpty(rc.TargetDomains),
                         Protocol = ValidationHelper.DefaultIfEmpty(rc.Protocol, "TCP"),
                         Action = ValidationHelper.DefaultIfEmpty(rc.Action, "PROXY"),
                         IsEnabled = rc.IsEnabled,
@@ -1207,6 +1208,7 @@ public class MainWindowViewModel : ViewModelBase
                 ProcessName = rc.ProcessName,
                 TargetHosts = ValidationHelper.DefaultIfEmpty(rc.TargetHosts),
                 TargetPorts = ValidationHelper.DefaultIfEmpty(rc.TargetPorts),
+                TargetDomains = ValidationHelper.DefaultIfEmpty(rc.TargetDomains),
                 Protocol = ValidationHelper.DefaultIfEmpty(rc.Protocol, "TCP"),
                 Action = ValidationHelper.DefaultIfEmpty(rc.Action, "PROXY"),
                 IsEnabled = rc.IsEnabled,
@@ -1217,7 +1219,7 @@ public class MainWindowViewModel : ViewModelBase
             if (_proxyService != null)
             {
                 uint ruleId = _proxyService.AddRule(
-                    rule.ProcessName, rule.TargetHosts, rule.TargetPorts,
+                    rule.ProcessName, rule.TargetHosts, rule.TargetPorts, rule.TargetDomains,
                     rule.Protocol, rule.Action, nativeProxyId);
                 if (ruleId > 0)
                 {
@@ -1284,6 +1286,7 @@ public class MainWindowViewModel : ViewModelBase
                 ProcessName = r.ProcessName,
                 TargetHosts = r.TargetHosts,
                 TargetPorts = r.TargetPorts,
+                TargetDomains = r.TargetDomains,
                 Protocol = r.Protocol,
                 Action = r.Action,
                 IsEnabled = r.IsEnabled,
@@ -1318,6 +1321,7 @@ public class ProxyRule : ViewModelBase
     private string _processName = "*";
     private string _targetHosts = "*";
     private string _targetPorts = "*";
+    private string _targetDomains = "*";
     private string _protocol = "TCP";
     private string _action = "PROXY";
     private bool _isEnabled = true;
@@ -1353,6 +1357,12 @@ public class ProxyRule : ViewModelBase
     {
         get => _targetPorts;
         set => SetProperty(ref _targetPorts, value);
+    }
+
+    public string TargetDomains
+    {
+        get => _targetDomains;
+        set => SetProperty(ref _targetDomains, value);
     }
 
     public string Protocol

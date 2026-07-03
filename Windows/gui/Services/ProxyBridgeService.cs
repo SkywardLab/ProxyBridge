@@ -84,7 +84,7 @@ public class ProxyBridgeService : IDisposable
         return buffer.ToString();
     }
 
-    public uint AddRule(string processName, string targetHosts, string targetPorts, string protocol, string action, uint proxyConfigId = 0)
+    public uint AddRule(string processName, string targetHosts, string targetPorts, string targetDomains, string protocol, string action, uint proxyConfigId = 0)
     {
         ProxyBridgeNative.RuleAction ruleAction;
         if (string.Equals(action, "DIRECT", StringComparison.OrdinalIgnoreCase))
@@ -103,7 +103,7 @@ public class ProxyBridgeService : IDisposable
         else
             ruleProtocol = ProxyBridgeNative.RuleProtocol.TCP;
 
-        return ProxyBridgeNative.ProxyBridge_AddRule(processName, targetHosts, targetPorts, ruleProtocol, ruleAction, proxyConfigId);
+        return ProxyBridgeNative.ProxyBridge_AddRule(processName, targetHosts, targetPorts, targetDomains ?? "*", ruleProtocol, ruleAction, proxyConfigId);
     }
 
     public bool EnableRule(uint ruleId)
@@ -121,7 +121,7 @@ public class ProxyBridgeService : IDisposable
         return ProxyBridgeNative.ProxyBridge_DeleteRule(ruleId);
     }
 
-    public bool EditRule(uint ruleId, string processName, string targetHosts, string targetPorts, string protocol, string action, uint proxyConfigId = 0)
+    public bool EditRule(uint ruleId, string processName, string targetHosts, string targetPorts, string targetDomains, string protocol, string action, uint proxyConfigId = 0)
     {
         ProxyBridgeNative.RuleAction ruleAction;
         if (string.Equals(action, "DIRECT", StringComparison.OrdinalIgnoreCase))
@@ -140,7 +140,7 @@ public class ProxyBridgeService : IDisposable
         else
             ruleProtocol = ProxyBridgeNative.RuleProtocol.TCP;
 
-        return ProxyBridgeNative.ProxyBridge_EditRule(ruleId, processName, targetHosts, targetPorts, ruleProtocol, ruleAction, proxyConfigId);
+        return ProxyBridgeNative.ProxyBridge_EditRule(ruleId, processName, targetHosts, targetPorts, targetDomains ?? "*", ruleProtocol, ruleAction, proxyConfigId);
     }
 
     public uint GetRulePosition(uint ruleId)

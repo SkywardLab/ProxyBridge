@@ -244,6 +244,9 @@
   <data name="LabelTargetPorts" xml:space="preserve">
     <value>目标端口</value>
   </data>
+  <data name="LabelTargetDomains" xml:space="preserve">
+    <value>目标域名</value>
+  </data>
   <data name="LabelProtocol" xml:space="preserve">
     <value>协议</value>
   </data>
@@ -264,6 +267,9 @@
   </data>
   <data name="ExampleTargetPorts" xml:space="preserve">
     <value>示例: 80; 8000-9000; 3128</value>
+  </data>
+  <data name="ExampleTargetDomains" xml:space="preserve">
+    <value>示例: google.com; *.google.com; *.gstatic.com (需要未加密的 DNS)</value>
   </data>
   <data name="ProtocolTCP" xml:space="preserve">
     <value>TCP</value>

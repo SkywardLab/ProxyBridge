@@ -76,7 +76,7 @@
                     BorderBrush="#FF3F3F46"
                     BorderThickness="0,1,0,1"
                     Padding="20,12">
-                <Grid ColumnDefinitions="60,80,140,60,200,150,120,80,*">
+                <Grid ColumnDefinitions="60,80,140,60,200,150,120,150,80,*">
                     <TextBlock Grid.Column="0"
                                Text="Select"
                                FontSize="13"
@@ -120,12 +120,18 @@
                                Foreground="#FFB0B0B0"
                                Margin="0,0,10,0"/>
                     <TextBlock Grid.Column="7"
-                               Text="{Binding Loc.ProtocolLabel}"
+                               Text="{Binding Loc.TargetDomainsLabel}"
                                FontSize="13"
                                FontWeight="SemiBold"
                                Foreground="#FFB0B0B0"
                                Margin="0,0,10,0"/>
                     <TextBlock Grid.Column="8"
+                               Text="{Binding Loc.ProtocolLabel}"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="#FFB0B0B0"
+                               Margin="0,0,10,0"/>
+                    <TextBlock Grid.Column="9"
                                Text="{Binding Loc.ActionLabel}"
                                FontSize="13"
                                FontWeight="SemiBold"
@@ -146,7 +152,7 @@
                                     Padding="20,16"
                                     PointerPressed="Rule_PointerPressed"
                                     DragDrop.AllowDrop="True">
-                                <Grid ColumnDefinitions="60,80,140,60,200,150,120,80,*">
+                                <Grid ColumnDefinitions="60,80,140,60,200,150,120,150,80,*">
                                     <CheckBox Grid.Column="0"
                                               IsChecked="{Binding IsSelected}"
                                               VerticalAlignment="Center"
@@ -203,12 +209,19 @@
                                                TextTrimming="CharacterEllipsis"
                                                Margin="0,0,10,0"/>
                                     <TextBlock Grid.Column="7"
+                                               Text="{Binding TargetDomains}"
+                                               FontSize="13"
+                                               Foreground="#FF999999"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="0,0,10,0"/>
+                                    <TextBlock Grid.Column="8"
                                                Text="{Binding Protocol}"
                                                FontSize="13"
                                                Foreground="#FF999999"
                                                VerticalAlignment="Center"
                                                Margin="0,0,10,0"/>
-                                    <TextBlock Grid.Column="8"
+                                    <TextBlock Grid.Column="9"
                                                Text="{Binding ActionDisplay}"
                                                FontSize="14"
                                                FontWeight="SemiBold"
@@ -268,6 +281,18 @@
                     <TextBox Text="{Binding NewTargetPorts}"
                              Watermark="Any"/>
                     <TextBlock Text="{Binding Loc.ExampleTargetPorts}"
+                               FontSize="11"
+                               Foreground="#FF999999"
+                               TextWrapping="Wrap"
+                               Margin="0,4,0,0"/>
+                </StackPanel>
+
+                <!-- Target Domains Section -->
+                <StackPanel Spacing="6">
+                    <TextBlock Text="{Binding Loc.TargetDomainsLabel}" Classes="label"/>
+                    <TextBox Text="{Binding NewTargetDomains}"
+                             Watermark="Any"/>
+                    <TextBlock Text="{Binding Loc.ExampleTargetDomains}"
                                FontSize="11"
                                Foreground="#FF999999"
                                TextWrapping="Wrap"

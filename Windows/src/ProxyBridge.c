@@ -17,7 +17,7 @@
 #define LOCAL_PROXY_PORT 34010
 #define LOCAL_UDP_RELAY_PORT 34011  // its running UDP port still make sure to not run on same port as TCP, opening same port and tcp and udp cause issue and handling port at relay server response injection
 #define MAX_PROCESS_NAME 1024
-#define VERSION "4.0.0"
+#define VERSION "4.0.8-Beta"
 #define PID_CACHE_SIZE 1024
 #define PID_CACHE_TTL_MS 30000
 // Single packet-processor thread eliminates TCP packet reordering.
@@ -41,6 +41,7 @@ typedef struct PROCESS_RULE {
     char process_name[MAX_PROCESS_NAME];
     char *target_hosts;   // Dynamic: IP filter "*", "192.168.*.*", "10.0.0.1;172.16.0.0"
     char *target_ports;   // Dynamic: Port filter "*", "80", "80;443", "8000-9000"
+    char *target_domains; // Dynamic: Domain filter "*", "google.com", "*.google.com;*.gstatic.com" ("" or "*" = no domain restriction)
     RuleProtocol protocol;  // TCP, UDP, or BOTH
     RuleAction action;
     UINT32 proxy_config_id;  // Which proxy config to route this rule through (0 = first available)
@@ -170,6 +171,9 @@ static HANDLE udp_relay_thread = NULL;
 static HANDLE cleanup_thread = NULL;
 static PID_CACHE_ENTRY *pid_cache[PID_CACHE_SIZE] = {NULL};
 static volatile BOOL g_has_active_rules = FALSE;
+// Set when at least one enabled rule carries a domain filter. Gates the DNS-cache
+// lookup in match_rule so setups without domain rules pay zero extra cost.
+static volatile BOOL g_has_domain_rules = FALSE;
 static SOCKET udp_relay_socket = INVALID_SOCKET;
 static SOCKET udp_relay_socket6 = INVALID_SOCKET;
 static volatile BOOL running = FALSE;
@@ -358,6 +362,10 @@ static BOOL match_ip_list(const char *ip_list, UINT32 ip);
 static BOOL match_port_list(const char *port_list, UINT16 port);
 static BOOL match_process_pattern(const char *pattern, const char *process_name);
 static BOOL match_process_list(const char *process_list, const char *process_name);
+static BOOL match_domain_pattern(const char *pattern, const char *domain);
+static BOOL match_domain_list(const char *domain_list, const char *domain);
+static BOOL rule_has_domain_filter(const PROCESS_RULE *rule);
+static BOOL match_domain_filter(const PROCESS_RULE *rule, const char *domain);
 static int http_connect(SOCKET s, UINT32 dest_ip, UINT16 dest_port, const PROXY_CONFIG *cfg);
 static DWORD WINAPI local_proxy_server(LPVOID arg);
 static DWORD WINAPI connection_handler(LPVOID arg);
@@ -1786,6 +1794,89 @@ static BOOL match_process_list(const char *process_list, const char *process_nam
     return matched;
 }
 
+// Match a single domain pattern against a resolved hostname (case-insensitive).
+//   "*"              -> matches anything (no restriction)
+//   "google.com"     -> exact match only
+//   "*.google.com"   -> any subdomain AND the apex "google.com" itself
+//   "*google*"       -> generic wildcard (handled by wildcard_match)
+static BOOL match_domain_pattern(const char *pattern, const char *domain)
+{
+    if (pattern == NULL || pattern[0] == '\0' || strcmp(pattern, "*") == 0)
+        return TRUE;
+    if (domain == NULL || domain[0] == '\0')
+        return FALSE;
+
+    // "*.example.com" should also match the bare apex "example.com" (Proxifier/Clash convention).
+    if (pattern[0] == '*' && pattern[1] == '.' && pattern[2] != '\0')
+    {
+        if (_stricmp(pattern + 2, domain) == 0)
+            return TRUE;
+    }
+
+    if (strchr(pattern, '*') != NULL)
+        return wildcard_match(pattern, domain);
+
+    return _stricmp(pattern, domain) == 0;
+}
+
+// Match a resolved hostname against a semicolon/comma separated domain list.
+// Empty list or "*" means no restriction (matches anything, including unknown domain).
+static BOOL match_domain_list(const char *domain_list, const char *domain)
+{
+    if (domain_list == NULL || domain_list[0] == '\0' || strcmp(domain_list, "*") == 0)
+        return TRUE;
+    if (domain == NULL || domain[0] == '\0')
+        return FALSE;
+
+    size_t len = strnlen_s(domain_list, MAX_LIST_SIZE) + 1;
+    char *list_copy = (char *)malloc(len);
+    if (list_copy == NULL)
+        return FALSE;
+
+    strncpy_s(list_copy, len, domain_list, _TRUNCATE);
+    BOOL matched = FALSE;
+    char *context = NULL;
+    char *token = strtok_s(list_copy, ",;", &context);
+    while (token != NULL)
+    {
+        while (*token == ' ' || *token == '\t')
+            token++;
+        char *end = token + strnlen_s(token, MAX_LIST_SIZE);
+        while (end > token && (end[-1] == ' ' || end[-1] == '\t'))
+            *(--end) = '\0';
+
+        if (token[0] != '\0' && match_domain_pattern(token, domain))
+        {
+            matched = TRUE;
+            break;
+        }
+        token = strtok_s(NULL, ",;", &context);
+    }
+    free(list_copy);
+    return matched;
+}
+
+// TRUE if the rule actually restricts by domain (non-empty and not "*").
+static BOOL rule_has_domain_filter(const PROCESS_RULE *rule)
+{
+    return rule->target_domains != NULL &&
+           rule->target_domains[0] != '\0' &&
+           strcmp(rule->target_domains, "*") != 0;
+}
+
+// Domain-filter gate used inside rule matching.
+//   - rule has no domain restriction  -> always TRUE (preserves pre-domain behaviour)
+//   - rule restricts by domain, IP has no resolved hostname -> FALSE (cache-miss: don't match)
+//   - otherwise -> match the resolved hostname against the rule's domain list
+static BOOL match_domain_filter(const PROCESS_RULE *rule, const char *domain)
+{
+    if (!rule_has_domain_filter(rule))
+        return TRUE;
+    if (domain == NULL || domain[0] == '\0')
+        return FALSE;
+    return match_domain_list(rule->target_domains, domain);
+}
+
 
 static BOOL is_broadcast_or_multicast(UINT32 ip)
 {
@@ -1821,6 +1912,13 @@ static RuleAction match_rule(const char *process_name, UINT32 dest_ip, UINT16 de
     PROCESS_RULE *rule = rules_list;
     PROCESS_RULE *wildcard_rule = NULL;  // Save fully wildcard rule for last
 
+    // Resolve the destination hostname once (only when domain rules exist) from the
+    // DNS-snoop cache. Reused for every rule's domain filter below. Cache miss -> unknown.
+    char domain[256];
+    const char *dst_domain = NULL;
+    if (g_has_domain_rules && dns_cache_lookup(dest_ip, domain, sizeof(domain)))
+        dst_domain = domain;
+
     while (rule != NULL)
     {
         if (!rule->enabled)
@@ -1853,12 +1951,14 @@ static RuleAction match_rule(const char *process_name, UINT32 dest_ip, UINT16 de
             // Check if wildcard has specific filters
             BOOL has_ip_filter = (strcmp(rule->target_hosts, "*") != 0);
             BOOL has_port_filter = (strcmp(rule->target_ports, "*") != 0);
+            BOOL has_domain_filter = rule_has_domain_filter(rule);
 
-            if (has_ip_filter || has_port_filter)
+            if (has_ip_filter || has_port_filter || has_domain_filter)
             {
                 // Filtered wildcard - check if it matches
                 if (match_ip_list(rule->target_hosts, dest_ip) &&
-                    match_port_list(rule->target_ports, dest_port))
+                    match_port_list(rule->target_ports, dest_port) &&
+                    match_domain_filter(rule, dst_domain))
                 {
                     // Matched! Return this rule's action
                     if (out_proxy_config_id != NULL) *out_proxy_config_id = rule->proxy_config_id;
@@ -1881,9 +1981,10 @@ static RuleAction match_rule(const char *process_name, UINT32 dest_ip, UINT16 de
         // Check if process name matches
         if (match_process_list(rule->process_name, process_name))
         {
-            // Process matched! Check IP and port filters
+            // Process matched! Check IP, port and domain filters
             if (match_ip_list(rule->target_hosts, dest_ip) &&
-                match_port_list(rule->target_ports, dest_port))
+                match_port_list(rule->target_ports, dest_port) &&
+                match_domain_filter(rule, dst_domain))
             {
                 // All filters matched! Return this rule's action
                 if (out_proxy_config_id != NULL) *out_proxy_config_id = rule->proxy_config_id;
@@ -1914,6 +2015,13 @@ static RuleAction match_rule_v6(const char *process_name, const UINT8 dest_ip6[1
     PROCESS_RULE *rule = rules_list;
     PROCESS_RULE *wildcard_rule = NULL;
 
+    // Resolve the destination hostname once (only when domain rules exist) from the
+    // IPv6 DNS-snoop cache. Reused for every rule's domain filter below.
+    char domain[256];
+    const char *dst_domain = NULL;
+    if (g_has_domain_rules && dns_cache_lookup_v6(dest_ip6, domain, sizeof(domain)))
+        dst_domain = domain;
+
     while (rule != NULL)
     {
         if (!rule->enabled)
@@ -1934,11 +2042,13 @@ static RuleAction match_rule_v6(const char *process_name, const UINT8 dest_ip6[1
         {
             BOOL has_ip_filter   = (strcmp(rule->target_hosts, "*") != 0);
             BOOL has_port_filter = (strcmp(rule->target_ports, "*") != 0);
+            BOOL has_domain_filter = rule_has_domain_filter(rule);
 
-            if (has_ip_filter || has_port_filter)
+            if (has_ip_filter || has_port_filter || has_domain_filter)
             {
                 if (match_ip_list_v6(rule->target_hosts, dest_ip6) &&
-                    match_port_list(rule->target_ports, dest_port))
+                    match_port_list(rule->target_ports, dest_port) &&
+                    match_domain_filter(rule, dst_domain))
                 {
                     if (out_proxy_config_id != NULL) *out_proxy_config_id = rule->proxy_config_id;
                     return rule->action;
@@ -1956,7 +2066,8 @@ static RuleAction match_rule_v6(const char *process_name, const UINT8 dest_ip6[1
         if (match_process_list(rule->process_name, process_name))
         {
             if (match_ip_list_v6(rule->target_hosts, dest_ip6) &&
-                match_port_list(rule->target_ports, dest_port))
+                match_port_list(rule->target_ports, dest_port) &&
+                match_domain_filter(rule, dst_domain))
             {
                 if (out_proxy_config_id != NULL) *out_proxy_config_id = rule->proxy_config_id;
                 return rule->action;
@@ -3972,7 +4083,7 @@ static void cleanup_stale_connections(void)
     ReleaseSRWLockExclusive(&lock);
 }
 
-PROXYBRIDGE_API UINT32 ProxyBridge_AddRule(const char* process_name, const char* target_hosts, const char* target_ports, RuleProtocol protocol, RuleAction action, UINT32 proxy_config_id)
+PROXYBRIDGE_API UINT32 ProxyBridge_AddRule(const char* process_name, const char* target_hosts, const char* target_ports, const char* target_domains, RuleProtocol protocol, RuleAction action, UINT32 proxy_config_id)
 {
     if (process_name == NULL || process_name[0] == '\0')
         return 0;
@@ -3985,6 +4096,9 @@ PROXYBRIDGE_API UINT32 ProxyBridge_AddRule(const char* process_name, const char*
     strncpy_s(rule->process_name, MAX_PROCESS_NAME, process_name, _TRUNCATE);
     rule->protocol = protocol;
     rule->proxy_config_id = proxy_config_id;
+    rule->target_hosts = NULL;
+    rule->target_ports = NULL;
+    rule->target_domains = NULL;
 
     if (target_hosts != NULL && target_hosts[0] != '\0')
     {
@@ -4035,6 +4149,33 @@ PROXYBRIDGE_API UINT32 ProxyBridge_AddRule(const char* process_name, const char*
         strcpy_s(rule->target_ports, 2, "*");
     }
 
+    // target_domains: "" or NULL means no domain restriction (stored as "*")
+    if (target_domains != NULL && target_domains[0] != '\0')
+    {
+        size_t len = strnlen_s(target_domains, MAX_LIST_SIZE) + 1;
+        rule->target_domains = (char *)malloc(len);
+        if (rule->target_domains == NULL)
+        {
+            free(rule->target_ports);
+            free(rule->target_hosts);
+            free(rule);
+            return 0;
+        }
+        strncpy_s(rule->target_domains, len, target_domains, _TRUNCATE);
+    }
+    else
+    {
+        rule->target_domains = (char *)malloc(2);
+        if (rule->target_domains == NULL)
+        {
+            free(rule->target_ports);
+            free(rule->target_hosts);
+            free(rule);
+            return 0;
+        }
+        strcpy_s(rule->target_domains, 2, "*");
+    }
+
     rule->action = action;
     rule->enabled = TRUE;
     rule->next = NULL;
@@ -4054,7 +4195,7 @@ PROXYBRIDGE_API UINT32 ProxyBridge_AddRule(const char* process_name, const char*
     }
 
     update_has_active_rules();
-    log_message("Added rule ID: %u for process '%s' (Protocol: %d, Action: %d, ProxyConfigId: %u)", rule->rule_id, process_name, protocol, action, proxy_config_id);
+    log_message("Added rule ID: %u for process '%s' (Protocol: %d, Action: %d, ProxyConfigId: %u, Domains: %s)", rule->rule_id, process_name, protocol, action, proxy_config_id, rule->target_domains);
 
     return rule->rule_id;
 }
@@ -4120,6 +4261,8 @@ PROXYBRIDGE_API BOOL ProxyBridge_DeleteRule(UINT32 rule_id)
                 free(rule->target_hosts);
             if (rule->target_ports != NULL)
                 free(rule->target_ports);
+            if (rule->target_domains != NULL)
+                free(rule->target_domains);
             free(rule);
 
             update_has_active_rules();
@@ -4132,42 +4275,46 @@ PROXYBRIDGE_API BOOL ProxyBridge_DeleteRule(UINT32 rule_id)
     return FALSE;
 }
 
-PROXYBRIDGE_API BOOL ProxyBridge_EditRule(UINT32 rule_id, const char* process_name, const char* target_hosts, const char* target_ports, RuleProtocol protocol, RuleAction action, UINT32 proxy_config_id)
+PROXYBRIDGE_API BOOL ProxyBridge_EditRule(UINT32 rule_id, const char* process_name, const char* target_hosts, const char* target_ports, const char* target_domains, RuleProtocol protocol, RuleAction action, UINT32 proxy_config_id)
 {
     if (rule_id == 0 || process_name == NULL || target_hosts == NULL || target_ports == NULL)
         return FALSE;
+
+    // NULL/"" domains means "no restriction" -> stored as "*"
+    const char *domains_in = (target_domains != NULL && target_domains[0] != '\0') ? target_domains : "*";
 
     PROCESS_RULE *rule = rules_list;
     while (rule != NULL)
     {
         if (rule->rule_id == rule_id)
         {
+            // Allocate all three replacements up front so a failure leaves the rule untouched.
+            char *new_hosts   = _strdup(target_hosts);
+            char *new_ports   = _strdup(target_ports);
+            char *new_domains = _strdup(domains_in);
+            if (new_hosts == NULL || new_ports == NULL || new_domains == NULL)
+            {
+                free(new_hosts);
+                free(new_ports);
+                free(new_domains);
+                return FALSE;
+            }
+
             strncpy_s(rule->process_name, MAX_PROCESS_NAME, process_name, _TRUNCATE);
 
-            if (rule->target_hosts != NULL)
-                free(rule->target_hosts);
-            rule->target_hosts = _strdup(target_hosts);
-            if (rule->target_hosts == NULL)
-            {
-                return FALSE;
-            }
-
-            if (rule->target_ports != NULL)
-                free(rule->target_ports);
-            rule->target_ports = _strdup(target_ports);
-            if (rule->target_ports == NULL)
-            {
-                free(rule->target_hosts);
-                rule->target_hosts = NULL;
-                return FALSE;
-            }
+            free(rule->target_hosts);
+            free(rule->target_ports);
+            free(rule->target_domains);
+            rule->target_hosts   = new_hosts;
+            rule->target_ports   = new_ports;
+            rule->target_domains = new_domains;
 
             rule->protocol = protocol;
             rule->action = action;
             rule->proxy_config_id = proxy_config_id;
 
             update_has_active_rules();
-            log_message("Updated rule ID: %u (ProxyConfigId: %u)", rule_id, proxy_config_id);
+            log_message("Updated rule ID: %u (ProxyConfigId: %u, Domains: %s)", rule_id, proxy_config_id, rule->target_domains);
             return TRUE;
         }
         rule = rule->next;
@@ -4641,19 +4788,48 @@ static DWORD WINAPI cleanup_worker(LPVOID arg)
     return 0;
 }
 
+// Flush the Windows DNS resolver cache so applications re-resolve hostnames on the
+// wire, where our port-53 snoop can capture the IP->hostname mapping. Without this a
+// domain that was resolved before a domain rule existed would have no cached mapping
+// and the rule could not match. DnsFlushResolverCache is loaded dynamically so we
+// avoid a hard dnsapi.lib dependency (keeps the MinGW/GCC build path unchanged).
+static void flush_dns_resolver_cache(void)
+{
+    HMODULE dnsapi = LoadLibraryA("dnsapi.dll");
+    if (dnsapi == NULL)
+        return;
+    typedef BOOL (WINAPI *DnsFlushFn)(void);
+    DnsFlushFn fn = (DnsFlushFn)GetProcAddress(dnsapi, "DnsFlushResolverCache");
+    if (fn != NULL)
+        fn();
+    FreeLibrary(dnsapi);
+}
+
 static void update_has_active_rules(void)
 {
-    g_has_active_rules = FALSE;
+    BOOL has_active = FALSE;
+    BOOL has_domain = FALSE;
     PROCESS_RULE *rule = rules_list;
     while (rule != NULL)
     {
         if (rule->enabled)
         {
-            g_has_active_rules = TRUE;
-            break;
+            has_active = TRUE;
+            if (rule_has_domain_filter(rule))
+            {
+                has_domain = TRUE;
+                break;  // both flags are now known
+            }
         }
         rule = rule->next;
     }
+    g_has_active_rules = has_active;
+
+    // Edge trigger: when domain rules first become active, flush the OS DNS cache so
+    // subsequent connections re-resolve and populate our snoop cache.
+    if (has_domain && !g_has_domain_rules && running)
+        flush_dns_resolver_cache();
+    g_has_domain_rules = has_domain;
 }
 
 PROXYBRIDGE_API BOOL ProxyBridge_Start(void)
@@ -4666,6 +4842,11 @@ PROXYBRIDGE_API BOOL ProxyBridge_Start(void)
 
     InitializeSRWLock(&lock);
     dns_cache_init();
+
+    // If domain rules were configured before start, flush the OS DNS cache so the very
+    // first connections re-resolve on the wire and populate our IP->hostname snoop cache.
+    if (g_has_domain_rules)
+        flush_dns_resolver_cache();
 
     running = TRUE;
 
@@ -4932,6 +5113,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
                     free(to_free->target_hosts);
                 if (to_free->target_ports != NULL)
                     free(to_free->target_ports);
+                if (to_free->target_domains != NULL)
+                    free(to_free->target_domains);
 
                 free(to_free);
             }

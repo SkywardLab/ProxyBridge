@@ -58,6 +58,7 @@ public static class ProxyBridgeNative
         [MarshalAs(UnmanagedType.LPUTF8Str)] string processName,
         [MarshalAs(UnmanagedType.LPStr)] string targetHosts,
         [MarshalAs(UnmanagedType.LPStr)] string targetPorts,
+        [MarshalAs(UnmanagedType.LPStr)] string targetDomains,
         RuleProtocol protocol,
         RuleAction action,
         uint proxyConfigId);
@@ -81,6 +82,7 @@ public static class ProxyBridgeNative
         [MarshalAs(UnmanagedType.LPUTF8Str)] string processName,
         [MarshalAs(UnmanagedType.LPStr)] string targetHosts,
         [MarshalAs(UnmanagedType.LPStr)] string targetPorts,
+        [MarshalAs(UnmanagedType.LPStr)] string targetDomains,
         RuleProtocol protocol,
         RuleAction action,
         uint proxyConfigId);

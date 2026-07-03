@@ -16,9 +16,15 @@ public class AboutViewModel
 
     public AboutViewModel(Action onClose)
     {
-        var version = Assembly.GetExecutingAssembly().GetName().Version;
-        Version = version != null
-            ? $"Version {version.Major}.{version.Minor}.{version.Build}"
+        // AssemblyVersion (AssemblyName.Version) is strictly numeric — .NET drops any
+        // "-Beta" suffix before it gets there. The csproj's <Version> (which does keep
+        // suffixes like "4.0.8-Beta") is embedded as AssemblyInformationalVersionAttribute,
+        // so read that instead to show the real product version, beta tag included.
+        var infoVersion = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+
+        Version = !string.IsNullOrWhiteSpace(infoVersion)
+            ? $"Version {infoVersion}"
             : "Version 1.0.0";
 
         CloseCommand = new RelayCommand(onClose);

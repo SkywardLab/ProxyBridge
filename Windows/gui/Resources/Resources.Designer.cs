@@ -443,6 +443,8 @@ namespace ProxyBridge.GUI.Resources {
         internal static string ExampleApplications => ResourceManager.GetString("ExampleApplications", resourceCulture);
         internal static string ExampleTargetHosts => ResourceManager.GetString("ExampleTargetHosts", resourceCulture);
         internal static string ExampleTargetPorts => ResourceManager.GetString("ExampleTargetPorts", resourceCulture);
+        internal static string LabelTargetDomains => ResourceManager.GetString("LabelTargetDomains", resourceCulture);
+        internal static string ExampleTargetDomains => ResourceManager.GetString("ExampleTargetDomains", resourceCulture);
         internal static string ProtocolTCP => ResourceManager.GetString("ProtocolTCP", resourceCulture);
         internal static string ProtocolUDP => ResourceManager.GetString("ProtocolUDP", resourceCulture);
         internal static string ProtocolBoth => ResourceManager.GetString("ProtocolBoth", resourceCulture);

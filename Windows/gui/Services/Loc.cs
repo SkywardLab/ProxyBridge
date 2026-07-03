@@ -123,6 +123,7 @@ public class Loc : INotifyPropertyChanged
     public string ProcessLabel => Resources.Resources.LabelProcess;
     public string TargetHostsLabel => Resources.Resources.LabelTargetHosts;
     public string TargetPortsLabel => Resources.Resources.LabelTargetPorts;
+    public string TargetDomainsLabel => Resources.Resources.LabelTargetDomains;
     public string ProtocolLabel => Resources.Resources.LabelProtocol;
     public string ActionLabel => Resources.Resources.LabelAction;
     public string ApplicationsLabel => Resources.Resources.LabelApplications;
@@ -130,6 +131,7 @@ public class Loc : INotifyPropertyChanged
     public string ExampleApplications => Resources.Resources.ExampleApplications;
     public string ExampleTargetHosts => Resources.Resources.ExampleTargetHosts;
     public string ExampleTargetPorts => Resources.Resources.ExampleTargetPorts;
+    public string ExampleTargetDomains => Resources.Resources.ExampleTargetDomains;
     public string ProtocolTCP => Resources.Resources.ProtocolTCP;
     public string ProtocolUDP => Resources.Resources.ProtocolUDP;
     public string ProtocolBoth => Resources.Resources.ProtocolBoth;

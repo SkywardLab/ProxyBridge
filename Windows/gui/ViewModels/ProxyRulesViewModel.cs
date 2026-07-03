@@ -24,6 +24,7 @@ public class ProxyRulesViewModel : ViewModelBase
     private string _newProcessName = "*";
     private string _newTargetHosts = "*";
     private string _newTargetPorts = "*";
+    private string _newTargetDomains = "*";
     private string _newProtocol = "TCP"; // TCP, UDP, or BOTH
     private RuleActionItem? _selectedRuleAction;
     private string _processNameError = "";
@@ -62,6 +63,12 @@ public class ProxyRulesViewModel : ViewModelBase
     {
         get => _newTargetPorts;
         set => SetProperty(ref _newTargetPorts, value);
+    }
+
+    public string NewTargetDomains
+    {
+        get => _newTargetDomains;
+        set => SetProperty(ref _newTargetDomains, value);
     }
 
     public string NewProtocol
@@ -120,6 +127,7 @@ public class ProxyRulesViewModel : ViewModelBase
         NewProcessName = "*";
         NewTargetHosts = "*";
         NewTargetPorts = "*";
+        NewTargetDomains = "*";
         NewProtocol = "TCP";
         SelectedRuleAction = AvailableActions.FirstOrDefault();
         ProcessNameError = "";
@@ -156,6 +164,7 @@ public class ProxyRulesViewModel : ViewModelBase
             NewProcessName = ValidationHelper.DefaultIfEmpty(NewProcessName);
             NewTargetHosts = ValidationHelper.DefaultIfEmpty(NewTargetHosts);
             NewTargetPorts = ValidationHelper.DefaultIfEmpty(NewTargetPorts);
+            NewTargetDomains = ValidationHelper.DefaultIfEmpty(NewTargetDomains);
 
             if (!_processNameRegex.IsMatch(NewProcessName))
             {
@@ -179,13 +188,14 @@ public class ProxyRulesViewModel : ViewModelBase
                 string action = SelectedRuleAction?.Action ?? "PROXY";
                 uint pcId = SelectedRuleAction?.ProxyConfigId ?? 0;
 
-                if (_proxyService.EditRule(_currentEditingRuleId, NewProcessName, NewTargetHosts, NewTargetPorts, NewProtocol, action, pcId))
+                if (_proxyService.EditRule(_currentEditingRuleId, NewProcessName, NewTargetHosts, NewTargetPorts, NewTargetDomains, NewProtocol, action, pcId))
                 {
                     if (existRule != null)
                     {
                         existRule.ProcessName = NewProcessName;
                         existRule.TargetHosts = NewTargetHosts;
                         existRule.TargetPorts = NewTargetPorts;
+                        existRule.TargetDomains = NewTargetDomains;
                         existRule.Protocol = NewProtocol;
                         existRule.Action = action;
                         existRule.ProxyConfigId = pcId;
@@ -206,6 +216,7 @@ public class ProxyRulesViewModel : ViewModelBase
                     ProcessName = NewProcessName,
                     TargetHosts = NewTargetHosts,
                     TargetPorts = NewTargetPorts,
+                    TargetDomains = NewTargetDomains,
                     Protocol = NewProtocol,
                     Action = action,
                     IsEnabled = true,
@@ -301,6 +312,7 @@ public class ProxyRulesViewModel : ViewModelBase
             NewProcessName = rule.ProcessName;
             NewTargetHosts = rule.TargetHosts;
             NewTargetPorts = rule.TargetPorts;
+            NewTargetDomains = rule.TargetDomains;
             NewProtocol = rule.Protocol;
             SelectedRuleAction = AvailableActions.FirstOrDefault(a =>
                 a.Action == rule.Action && (a.Action != "PROXY" || a.ProxyConfigId == rule.ProxyConfigId))

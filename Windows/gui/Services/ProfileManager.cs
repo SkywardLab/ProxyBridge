@@ -32,6 +32,7 @@ public class ProxyRuleConfig
     public string ProcessName { get; set; } = "";
     public string TargetHosts { get; set; } = "*";
     public string TargetPorts { get; set; } = "*";
+    public string TargetDomains { get; set; } = "*";
     public string Protocol { get; set; } = "TCP";
     public string Action { get; set; } = "PROXY";
     public bool IsEnabled { get; set; } = true;
