@@ -4,6 +4,8 @@
 <dict>
 	<key>NSSystemExtensionUsageDescription</key>
 	<string>ProxyBridge needs to install a system extension to intercept network traffic</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>ProxyBridge routes traffic through proxy servers on your local network.</string>
 	<key>NetworkExtension</key>
 	<dict>
 		<key>NEProviderClasses</key>

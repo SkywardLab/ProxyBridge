@@ -406,6 +406,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ProxyBridge connects to proxy servers on your local network to route traffic and to test proxy reachability.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -451,6 +452,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ProxyBridge connects to proxy servers on your local network to route traffic and to test proxy reachability.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
