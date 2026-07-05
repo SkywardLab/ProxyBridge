@@ -433,10 +433,10 @@ struct RuleEditorView: View {
                     )
 
                     formField(
-                        label: "Bundle Identifier (Package Name)",
+                        label: "Process / Bundle Identifier",
                         placeholder: "*",
                         text: $processNames,
-                        hint: "Example: com.apple.Safari; com.google.Chrome; com.*.browser; *"
+                        hint: "Matches the bundle id or the process name. Examples: com.apple.Safari; curl; Google Chrome Helper; *chrome*; *"
                     )
                     
                     formField(
@@ -452,7 +452,13 @@ struct RuleEditorView: View {
                         text: $targetPorts,
                         hint: "Example: 80; 8000-9000; 3128"
                     )
-                    
+
+                    HStack(spacing: 4) {
+                        Image(systemName: "info.circle").foregroundColor(.secondary)
+                        Text("Target hosts and ports only apply to TCP. UDP rules match on the app (bundle id) only.")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Protocol")
                             .fontWeight(.medium)
@@ -462,6 +468,13 @@ struct RuleEditorView: View {
                             Text("BOTH").tag("BOTH")
                         }
                         .pickerStyle(.segmented)
+                        if selectedProtocol == "UDP" || selectedProtocol == "BOTH" {
+                            HStack(alignment: .top, spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
+                                Text("UDP only works with a SOCKS5 proxy. Not all SOCKS5 proxies support UDP by default, and SOCKS5 UDP support does not guarantee QUIC or HTTP/3 works - verify your proxy supports these separately.")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
                     }
                     
                     VStack(alignment: .leading, spacing: 8) {
