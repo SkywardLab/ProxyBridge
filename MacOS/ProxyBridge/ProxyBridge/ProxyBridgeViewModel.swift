@@ -13,6 +13,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     var tunnelSession: NETunnelProviderSession?
     private var logTimer: Timer?
     @Published private(set) var proxyConfigs: [ProxyConfig] = []
+    @Published private(set) var profiles: [String] = []
+    @Published private(set) var activeProfile: String = "Default"
     
     private let maxLogEntries = 500
     // trim back to this when the cap is hit, so we don't shift on every entry
@@ -91,6 +93,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         connections.reserveCapacity(maxLogEntries)
         activityLogs.reserveCapacity(maxLogEntries)
         loadTrafficLoggingSetting()
+        loadProfiles()
         loadProxyConfig()
         NotificationCenter.default.addObserver(
             self,
@@ -150,7 +153,119 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "proxyConfigs"),
            let configs = try? JSONDecoder().decode([ProxyConfig].self, from: data) {
             proxyConfigs = configs
+        } else {
+            proxyConfigs = []
         }
+    }
+
+    // MARK: - Profiles
+    //
+    // a profile bundles the proxy configs + rules. the live "proxyConfigs" and
+    // "proxyRules" UserDefaults keys always hold the active profile so the rest
+    // of the app and the extension keep reading them unchanged. switching just
+    // snapshots the current profile and swaps in another one's data.
+
+    private func profileConfigsKey(_ name: String) -> String { "profile.\(name).proxyConfigs" }
+    private func profileRulesKey(_ name: String) -> String { "profile.\(name).proxyRules" }
+    private func profileLoggingKey(_ name: String) -> String { "profile.\(name).trafficLoggingEnabled" }
+
+    private func loadProfiles() {
+        let d = UserDefaults.standard
+        var names = d.stringArray(forKey: "profiles") ?? []
+        if names.isEmpty {
+            // first run, seed a Default profile from whatever is already stored
+            names = ["Default"]
+            d.set(names, forKey: "profiles")
+            d.set("Default", forKey: "activeProfile")
+            flushWorkingSet(to: "Default")
+        }
+        profiles = names
+        activeProfile = d.string(forKey: "activeProfile") ?? names.first ?? "Default"
+    }
+
+    // copy the live working keys into a profile's snapshot
+    private func flushWorkingSet(to name: String) {
+        let d = UserDefaults.standard
+        d.set(d.data(forKey: "proxyConfigs"), forKey: profileConfigsKey(name))
+        d.set(d.array(forKey: "proxyRules"), forKey: profileRulesKey(name))
+        d.set(isTrafficLoggingEnabled, forKey: profileLoggingKey(name))
+    }
+
+    // load a profile's snapshot into the live working keys
+    private func loadWorkingSet(from name: String) {
+        let d = UserDefaults.standard
+        if let data = d.data(forKey: profileConfigsKey(name)) {
+            d.set(data, forKey: "proxyConfigs")
+        } else {
+            d.removeObject(forKey: "proxyConfigs")
+        }
+        d.set(d.array(forKey: profileRulesKey(name)) ?? [], forKey: "proxyRules")
+        // traffic logging is per profile, default on when the snapshot has none
+        let logging = d.object(forKey: profileLoggingKey(name)) as? Bool ?? true
+        d.set(logging, forKey: "trafficLoggingEnabled")
+    }
+
+    // reload in-memory state from the working keys and push it to the extension
+    private func applyActiveProfile() {
+        loadProxyConfig()
+        loadTrafficLoggingSetting()
+        if let session = tunnelSession {
+            sendProxyConfigsToExtension(session: session)
+            RuleManager.resyncRules(session: session) { _, _ in }
+            sendTrafficLoggingToExtension(isTrafficLoggingEnabled)
+        }
+        updatePollingState()
+    }
+
+    func switchProfile(to name: String) {
+        guard name != activeProfile, profiles.contains(name) else { return }
+        flushWorkingSet(to: activeProfile)
+        loadWorkingSet(from: name)
+        activeProfile = name
+        UserDefaults.standard.set(name, forKey: "activeProfile")
+        applyActiveProfile()
+    }
+
+    func createProfile(_ rawName: String) {
+        let name = rawName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, !profiles.contains(name) else { return }
+        // new profiles start empty
+        UserDefaults.standard.removeObject(forKey: profileConfigsKey(name))
+        UserDefaults.standard.set([[String: Any]](), forKey: profileRulesKey(name))
+        profiles.append(name)
+        UserDefaults.standard.set(profiles, forKey: "profiles")
+        switchProfile(to: name)
+    }
+
+    func renameProfile(_ old: String, to rawNew: String) {
+        let new = rawNew.trimmingCharacters(in: .whitespaces)
+        guard !new.isEmpty, profiles.contains(old), !profiles.contains(new) else { return }
+        let d = UserDefaults.standard
+        // make sure the active profile's snapshot is current before moving it
+        if old == activeProfile { flushWorkingSet(to: old) }
+        d.set(d.data(forKey: profileConfigsKey(old)), forKey: profileConfigsKey(new))
+        d.set(d.array(forKey: profileRulesKey(old)), forKey: profileRulesKey(new))
+        d.removeObject(forKey: profileConfigsKey(old))
+        d.removeObject(forKey: profileRulesKey(old))
+        if let i = profiles.firstIndex(of: old) { profiles[i] = new }
+        d.set(profiles, forKey: "profiles")
+        if activeProfile == old {
+            activeProfile = new
+            d.set(new, forKey: "activeProfile")
+        }
+    }
+
+    func deleteProfile(_ name: String) {
+        guard profiles.count > 1, profiles.contains(name) else { return }
+        // can't delete the one we're on, move to another first
+        if name == activeProfile, let other = profiles.first(where: { $0 != name }) {
+            switchProfile(to: other)
+        }
+        let d = UserDefaults.standard
+        d.removeObject(forKey: profileConfigsKey(name))
+        d.removeObject(forKey: profileRulesKey(name))
+        profiles.removeAll { $0 == name }
+        d.set(profiles, forKey: "profiles")
     }
 
     private func saveProxyConfigs() {

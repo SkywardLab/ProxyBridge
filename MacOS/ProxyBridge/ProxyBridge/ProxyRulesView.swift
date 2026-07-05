@@ -257,6 +257,11 @@ struct ProxyRulesView: View {
         .onAppear {
             loadRules()
         }
+        // reload when the active profile changes so an open window isn't stale
+        .onChange(of: viewModel.activeProfile) { _ in
+            selectedRuleIds.removeAll()
+            loadRules()
+        }
         .sheet(isPresented: $showAddRule) {
             RuleEditorView(viewModel: viewModel, onCommit: { commitRule($0) })
         }

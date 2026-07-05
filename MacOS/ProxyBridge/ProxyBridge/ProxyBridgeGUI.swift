@@ -35,7 +35,39 @@ struct ProxyBridgeGUIApp: App {
                     set: { _ in viewModel.toggleTrafficLogging() }
                 ))
             }
-            
+
+            CommandMenu("Profile") {
+                ForEach(viewModel.profiles, id: \.self) { name in
+                    Button(action: { viewModel.switchProfile(to: name) }) {
+                        // checkmark marks the active profile
+                        if name == viewModel.activeProfile {
+                            Label(name, systemImage: "checkmark")
+                        } else {
+                            Text(name)
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button("New Profile...") {
+                    promptProfileName(title: "New Profile", message: "Enter a name for the new profile.") {
+                        viewModel.createProfile($0)
+                    }
+                }
+
+                Button("Rename \"\(viewModel.activeProfile)\"...") {
+                    promptProfileName(title: "Rename Profile", message: "Enter a new name.", defaultText: viewModel.activeProfile) {
+                        viewModel.renameProfile(viewModel.activeProfile, to: $0)
+                    }
+                }
+
+                Button("Delete \"\(viewModel.activeProfile)\"") {
+                    viewModel.deleteProfile(viewModel.activeProfile)
+                }
+                .disabled(viewModel.profiles.count <= 1)
+            }
+
             CommandGroup(replacing: .help) {
                 Button("Check for Updates...") {
                     openUpdateCheckWindow()
@@ -88,7 +120,25 @@ struct ProxyBridgeGUIApp: App {
     private func openUpdateCheckWindow() {
         NSApp.sendAction(#selector(AppDelegate.openUpdateCheck), to: nil, from: nil)
     }
-    
+
+    // small AppKit text prompt, SwiftUI has no clean text-input alert on macOS
+    private func promptProfileName(title: String, message: String, defaultText: String = "", onSubmit: @escaping (String) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = defaultText
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            onSubmit(field.stringValue)
+        }
+    }
+
     private func checkForUpdatesOnStartup() {
         let shouldCheck = UserDefaults.standard.object(forKey: "checkForUpdatesOnStartup") as? Bool ?? true
         
