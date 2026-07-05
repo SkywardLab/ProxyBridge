@@ -90,28 +90,29 @@ struct ProxyRule: Codable {
         if pattern.isEmpty || pattern == "*" {
             return true
         }
-        
+
         let isFullPathPattern = pattern.contains("/") || pattern.contains("\\")
         let matchTarget = isFullPathPattern ? processPath : filename
-        
-        if pattern.hasSuffix("*") {
-            let prefix = String(pattern.dropLast())
-            return matchTarget.lowercased().hasPrefix(prefix.lowercased())
+        return globMatch(pattern.lowercased(), matchTarget.lowercased())
+    }
+
+    // wildcard match supporting any number of "*", e.g. *chrome*, com.*.browser, curl*
+    private static func globMatch(_ pattern: String, _ text: String) -> Bool {
+        let p = Array(pattern), t = Array(text)
+        var pi = 0, ti = 0, star = -1, mark = 0
+        while ti < t.count {
+            if pi < p.count, p[pi] == t[ti] {
+                pi += 1; ti += 1
+            } else if pi < p.count, p[pi] == "*" {
+                star = pi; mark = ti; pi += 1
+            } else if star != -1 {
+                pi = star + 1; mark += 1; ti = mark
+            } else {
+                return false
+            }
         }
-        
-        if pattern.hasPrefix("*") {
-            let suffix = String(pattern.dropFirst())
-            return matchTarget.lowercased().hasSuffix(suffix.lowercased())
-        }
-        
-        if let starIndex = pattern.firstIndex(of: "*") {
-            let prefix = String(pattern[..<starIndex])
-            let suffix = String(pattern[pattern.index(after: starIndex)...])
-            let lower = matchTarget.lowercased()
-            return lower.hasPrefix(prefix.lowercased()) && lower.hasSuffix(suffix.lowercased())
-        }
-        
-        return matchTarget.lowercased() == pattern.lowercased()
+        while pi < p.count, p[pi] == "*" { pi += 1 }
+        return pi == p.count
     }
     
     private static func matchIPList(_ ipList: String, ipString: String) -> Bool {
@@ -238,7 +239,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     }
 
     // circular buffer for logs, avoids shifting the whole array on every pop
-    private static let logCapacity = 1000
+    private static let logCapacity = 500
     private var logBuffer = [LogEntry?](repeating: nil, count: AppProxyProvider.logCapacity)
     private var logHead = 0
     private var logTail = 0
@@ -370,15 +371,15 @@ class AppProxyProvider: NETransparentProxyProvider {
         let clientFlow: NEAppProxyUDPFlow
         let controlConnection: NWTCPConnection  // socks5 tcp control channel, keeps the association alive
         let udpSession: NWUDPSession            // relay channel to the socks server
-        let processPath: String
+        let displayName: String
         var loggedDestinations = Set<String>()  // dedupe connection logs, bounded
         var isTornDown = false
 
-        init(clientFlow: NEAppProxyUDPFlow, controlConnection: NWTCPConnection, udpSession: NWUDPSession, processPath: String) {
+        init(clientFlow: NEAppProxyUDPFlow, controlConnection: NWTCPConnection, udpSession: NWUDPSession, displayName: String) {
             self.clientFlow = clientFlow
             self.controlConnection = controlConnection
             self.udpSession = udpSession
-            self.processPath = processPath
+            self.displayName = displayName
         }
     }
     private var udpAssociations: [NEAppProxyUDPFlow: UDPAssociation] = [:]
@@ -448,8 +449,6 @@ class AppProxyProvider: NETransparentProxyProvider {
                 nextRuleId += 1
                 rules.append(rule)
                 rulesLock.unlock()
-                
-                log("Added rule #\(rule.ruleId): \(rule.processNames) -> \(rule.action)")
 
                 let response: [String: Any] = [
                     "status": "ok",
@@ -472,7 +471,6 @@ class AppProxyProvider: NETransparentProxyProvider {
             let count = rules.count
             rules.removeAll()
             rulesLock.unlock()
-            log("Cleared all rules (\(count) rules)")
             let response: [String: Any] = ["status": "ok", "cleared": count]
             completionHandler?(try? JSONSerialization.data(withJSONObject: response))
         
@@ -541,21 +539,25 @@ class AppProxyProvider: NETransparentProxyProvider {
         let matchedRule = findMatchingRule(bundleId: processPath, processName: processName, destination: destination, port: portNum, connectionProtocol: .tcp, checkIpPort: true)
 
         if let rule = matchedRule {
-            let action = rule.action
-            sendLogToApp(protocol: "TCP", process: displayName, destination: destination, port: portStr, proxy: action)
-
-            switch action {
+            switch rule.action {
             case "DIRECT":
+                sendLogToApp(protocol: "TCP", process: displayName, destination: destination, port: portStr, proxy: "Direct")
                 return false
             case "BLOCK":
+                sendLogToApp(protocol: "TCP", process: displayName, destination: destination, port: portStr, proxy: "BLOCK")
                 flow.closeReadWithError(nil)
                 flow.closeWriteWithError(nil)
                 return true
             default:
                 proxyLock.lock()
-                let config = storedProxyConfigs[action]
+                let config = storedProxyConfigs[rule.action]
                 proxyLock.unlock()
-                guard let config = config else { return false }
+                guard let config = config else {
+                    // rule points at a proxy that no longer exists, let it go direct
+                    sendLogToApp(protocol: "TCP", process: displayName, destination: destination, port: portStr, proxy: "Direct")
+                    return false
+                }
+                sendLogToApp(protocol: "TCP", process: displayName, destination: destination, port: portStr, proxy: proxyLabel(config))
                 proxyTCPFlow(flow, destination: destination, port: portNum, config: config)
                 return true
             }
@@ -564,15 +566,16 @@ class AppProxyProvider: NETransparentProxyProvider {
             return false
         }
     }
+
+    // human readable label for the connection log, e.g. SOCKS5 127.0.0.1:1080
+    private func proxyLabel(_ config: StoredProxyConfig) -> String {
+        return "\(config.type.uppercased()) \(config.host):\(config.port)"
+    }
     
     private func handleUDPFlow(_ flow: NEAppProxyUDPFlow) -> Bool {
-        var processPath = "unknown"
-        var processName: String?
-        if let metaData = flow.metaData as? NEFlowMetaData {
-            processPath = metaData.sourceAppSigningIdentifier
-            processName = getProcessName(from: metaData)
-        }
-        
+        let metaData = flow.metaData
+        let processPath = metaData.sourceAppSigningIdentifier
+        let processName = getProcessName(from: metaData)
         let displayName = processName ?? processPath
         
         if processPath == "com.interceptsuite.ProxyBridge" || processPath == "com.interceptsuite.ProxyBridge.extension" {
@@ -605,11 +608,13 @@ class AppProxyProvider: NETransparentProxyProvider {
                 guard let socks5Config = matched, socks5Config.type.lowercased() == "socks5" else { return false }
                 flow.open(withLocalEndpoint: nil) { [weak self] error in
                     guard let self = self else { return }
-                    if let error = error {
-                        self.log("Failed to open UDP flow: \(error.localizedDescription)", level: "ERROR")
+                    // a closed flow here is normal churn (quic opening and dropping
+                    // udp/443 flows constantly), nothing to do and not worth logging
+                    if error != nil {
                         return
                     }
-                    self.proxyUDPFlowViaSOCKS5(flow, processPath: processPath, socksHost: socks5Config.host, socksPort: socks5Config.port)
+                    // pass the resolved display name (curl), not the raw signing id (curl-<hash>)
+                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password)
                 }
                 return true
             }
@@ -628,13 +633,15 @@ class AppProxyProvider: NETransparentProxyProvider {
         clientFlow.closeWriteWithError(nil)
     }
 
-    private func proxyUDPFlowViaSOCKS5(_ clientFlow: NEAppProxyUDPFlow, processPath: String, socksHost: String, socksPort: Int) {
+    private func proxyUDPFlowViaSOCKS5(_ clientFlow: NEAppProxyUDPFlow, displayName: String, socksHost: String, socksPort: Int, username: String?, password: String?) {
         let proxyEndpoint = NWHostEndpoint(hostname: socksHost, port: String(socksPort))
         let tcpConnection = createTCPConnection(to: proxyEndpoint, enableTLS: false, tlsParameters: nil, delegate: nil)
 
-        let greetingData = Data([0x05, 0x01, 0x00])
+        // offer username/password auth when we have credentials, same as the tcp path
+        let useAuth = (username != nil && password != nil)
+        let greeting: [UInt8] = useAuth ? [0x05, 0x02, 0x00, 0x02] : [0x05, 0x01, 0x00]
 
-        tcpConnection.write(greetingData) { [weak self] error in
+        tcpConnection.write(Data(greeting)) { [weak self] error in
             guard let self = self else { return }
 
             if let error = error {
@@ -650,17 +657,64 @@ class AppProxyProvider: NETransparentProxyProvider {
                     return
                 }
 
-                guard let data = data, data.count == 2, data[1] == 0x00 else {
+                guard let data = data, data.count == 2, data[0] == 0x05 else {
                     self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP greeting response invalid")
                     return
                 }
 
-                self.sendSOCKS5UDPAssociate(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, processPath: processPath)
+                switch data[1] {
+                case 0x00:
+                    self.sendSOCKS5UDPAssociate(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, displayName: displayName)
+                case 0x02:
+                    self.sendSOCKS5UDPAuth(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, displayName: displayName, username: username ?? "", password: password ?? "")
+                default:
+                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP no acceptable auth method")
+                }
             }
         }
     }
 
-    private func sendSOCKS5UDPAssociate(clientFlow: NEAppProxyUDPFlow, tcpConnection: NWTCPConnection, socksHost: String, processPath: String) {
+    private func sendSOCKS5UDPAuth(clientFlow: NEAppProxyUDPFlow, tcpConnection: NWTCPConnection, socksHost: String, displayName: String, username: String, password: String) {
+        let user = Array(username.utf8), pass = Array(password.utf8)
+        guard user.count <= 255, pass.count <= 255 else {
+            self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP credentials too long")
+            return
+        }
+
+        var authData = Data()
+        authData.append(0x01)
+        authData.append(UInt8(user.count))
+        authData.append(contentsOf: user)
+        authData.append(UInt8(pass.count))
+        authData.append(contentsOf: pass)
+
+        tcpConnection.write(authData) { [weak self] error in
+            guard let self = self else { return }
+
+            if let error = error {
+                self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP auth write failed: \(error.localizedDescription)")
+                return
+            }
+
+            tcpConnection.readMinimumLength(2, maximumLength: 2) { [weak self] data, error in
+                guard let self = self else { return }
+
+                if let error = error {
+                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP auth response failed: \(error.localizedDescription)")
+                    return
+                }
+
+                guard let data = data, data.count == 2, data[1] == 0x00 else {
+                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP auth rejected")
+                    return
+                }
+
+                self.sendSOCKS5UDPAssociate(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, displayName: displayName)
+            }
+        }
+    }
+
+    private func sendSOCKS5UDPAssociate(clientFlow: NEAppProxyUDPFlow, tcpConnection: NWTCPConnection, socksHost: String, displayName: String) {
         var request = Data()
         request.append(0x05)
         request.append(0x03)
@@ -677,7 +731,8 @@ class AppProxyProvider: NETransparentProxyProvider {
                 return
             }
 
-            tcpConnection.readMinimumLength(10, maximumLength: 512) { [weak self] data, error in
+            // read at least VER+REP so we can report the reason even on a short reply
+            tcpConnection.readMinimumLength(2, maximumLength: 512) { [weak self] data, error in
                 guard let self = self else { return }
 
                 if let error = error {
@@ -685,8 +740,20 @@ class AppProxyProvider: NETransparentProxyProvider {
                     return
                 }
 
-                guard let data = data, data.count >= 10, data[0] == 0x05, data[1] == 0x00 else {
-                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP ASSOCIATE rejected")
+                guard let data = data, data.count >= 2, data[0] == 0x05 else {
+                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP ASSOCIATE bad reply (\(data?.count ?? 0) bytes)")
+                    return
+                }
+
+                let rep = data[1]
+                guard rep == 0x00 else {
+                    let reason = self.socksReplyReason(rep)
+                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP ASSOCIATE rejected, REP=0x\(String(format: "%02x", rep)) (\(reason))")
+                    return
+                }
+
+                guard data.count >= 10 else {
+                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP ASSOCIATE reply too short (\(data.count) bytes)")
                     return
                 }
 
@@ -697,11 +764,26 @@ class AppProxyProvider: NETransparentProxyProvider {
                     self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP ASSOCIATE returned no relay port")
                     return
                 }
-                self.relayUDPThroughSOCKS5(clientFlow: clientFlow, relayHost: relayHost, relayPort: relayPort, tcpConnection: tcpConnection, processPath: processPath)
+                self.relayUDPThroughSOCKS5(clientFlow: clientFlow, relayHost: relayHost, relayPort: relayPort, tcpConnection: tcpConnection, displayName: displayName)
             }
         }
     }
     
+    // human readable name for a socks5 REP code, from RFC 1928
+    private func socksReplyReason(_ rep: UInt8) -> String {
+        switch rep {
+        case 0x01: return "general failure"
+        case 0x02: return "not allowed by ruleset"
+        case 0x03: return "network unreachable"
+        case 0x04: return "host unreachable"
+        case 0x05: return "connection refused"
+        case 0x06: return "TTL expired"
+        case 0x07: return "command not supported"
+        case 0x08: return "address type not supported"
+        default: return "unknown"
+        }
+    }
+
     private func parseSOCKS5Address(from data: Data, offset: Int) -> (String, UInt16) {
         guard data.count > offset else { return ("0.0.0.0", 0) }
         let atyp = data[offset]
@@ -734,11 +816,11 @@ class AppProxyProvider: NETransparentProxyProvider {
         return ("0.0.0.0", 0)
     }
     
-    private func relayUDPThroughSOCKS5(clientFlow: NEAppProxyUDPFlow, relayHost: String, relayPort: UInt16, tcpConnection: NWTCPConnection, processPath: String) {
+    private func relayUDPThroughSOCKS5(clientFlow: NEAppProxyUDPFlow, relayHost: String, relayPort: UInt16, tcpConnection: NWTCPConnection, displayName: String) {
         let relayEndpoint = NWHostEndpoint(hostname: relayHost, port: String(relayPort))
         let udpSession = self.createUDPSession(to: relayEndpoint, from: nil)
 
-        let association = UDPAssociation(clientFlow: clientFlow, controlConnection: tcpConnection, udpSession: udpSession, processPath: processPath)
+        let association = UDPAssociation(clientFlow: clientFlow, controlConnection: tcpConnection, udpSession: udpSession, displayName: displayName)
 
         udpLock.lock()
         let existing = udpAssociations[clientFlow]
@@ -750,7 +832,9 @@ class AppProxyProvider: NETransparentProxyProvider {
 
         readAndForwardClientUDP(association)
         readAndForwardRelayUDP(association)
-        monitorControlConnection(association)
+        // note: we deliberately don't read the control connection to detect close.
+        // holding a strong ref keeps the associate alive, and reading it risks a
+        // spurious teardown that would EPIPE the app's udp socket.
     }
 
     // idempotent, cancels both channels and closes the flow exactly once
@@ -767,15 +851,6 @@ class AppProxyProvider: NETransparentProxyProvider {
         assoc.udpSession.cancel()
         flow.closeReadWithError(nil)
         flow.closeWriteWithError(nil)
-    }
-
-    // the socks control channel carries no data during a udp associate, so any
-    // completion here means the server dropped it and the association is dead
-    private func monitorControlConnection(_ association: UDPAssociation) {
-        let clientFlow = association.clientFlow
-        association.controlConnection.readMinimumLength(1, maximumLength: 1) { [weak self] _, _ in
-            self?.teardownUDP(clientFlow)
-        }
     }
 
     private func readAndForwardClientUDP(_ association: UDPAssociation) {
@@ -815,7 +890,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                     if association.loggedDestinations.count < 64 {
                         association.loggedDestinations.insert(destHost)
                     }
-                    self.sendLogToApp(protocol: "UDP", process: association.processPath, destination: destHost, port: nwHost.port, proxy: "SOCKS5")
+                    self.sendLogToApp(protocol: "UDP", process: association.displayName, destination: destHost, port: nwHost.port, proxy: "SOCKS5")
                 }
 
                 if let encapsulated = self.encapsulateSOCKS5UDP(datagram: datagrams[i], destHost: destHost, destPort: destPort) {
@@ -841,9 +916,9 @@ class AppProxyProvider: NETransparentProxyProvider {
             guard let self = self else { return }
 
             if let error = error {
-                // covers relay failures and icmp port-unreachable surfacing as a read error
+                // stop reading the relay but don't close the app's flow, let it
+                // time out on its own instead of getting a hard EPIPE
                 self.log("UDP relay error: \(error.localizedDescription)", level: "ERROR")
-                self.teardownUDP(clientFlow)
                 return
             }
 
@@ -872,11 +947,12 @@ class AppProxyProvider: NETransparentProxyProvider {
     }
     
     private func encapsulateSOCKS5UDP(datagram: Data, destHost: String, destPort: UInt16) -> Data? {
-        if datagram.count > 1400 {
-            self.log("Datagram too large (\(datagram.count) bytes), skipping", level: "WARN")
+        // a udp payload can be up to ~65507 bytes, don't drop mtu-sized quic
+        // packets, let the network fragment if it must
+        if datagram.count > 65507 {
             return nil
         }
-        
+
         var header = Data()
         header.append(contentsOf: [0, 0])
         header.append(0x00)
@@ -904,12 +980,6 @@ class AppProxyProvider: NETransparentProxyProvider {
         
         var result = header
         result.append(datagram)
-        
-        if result.count > 1472 {
-            self.log("Encapsulated datagram too large (\(result.count) bytes), skipping", level: "WARN")
-            return nil
-        }
-        
         return result
     }
     
@@ -1127,7 +1197,6 @@ class AppProxyProvider: NETransparentProxyProvider {
                     return
                 }
                 
-                self.log("SOCKS5 connection established to \(destination):\(port)")
                 self.relayData(clientFlow: clientFlow, proxyConnection: proxyConnection)
             }
         }
@@ -1185,7 +1254,6 @@ class AppProxyProvider: NETransparentProxyProvider {
                 }
                 
                 if response.contains("200") {
-                    self.log("HTTP CONNECT established to \(destination):\(port)")
                     self.relayData(clientFlow: clientFlow, proxyConnection: proxyConnection)
                 } else {
                     self.log("HTTP CONNECT failed: \(response)", level: "ERROR")
@@ -1223,7 +1291,6 @@ class AppProxyProvider: NETransparentProxyProvider {
             }
             
             guard let data = data, !data.isEmpty else {
-                self?.log("Client closed connection")
                 proxyConnection.cancel()
                 return
             }
@@ -1253,7 +1320,6 @@ class AppProxyProvider: NETransparentProxyProvider {
             }
             
             guard let data = data, !data.isEmpty else {
-                self?.log("Proxy closed connection")
                 clientFlow.closeReadWithError(nil)
                 clientFlow.closeWriteWithError(nil)
                 return

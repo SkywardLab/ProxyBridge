@@ -142,26 +142,22 @@ struct ConnectionsView: View {
     }
     
     private func connectionRow(_ connection: ProxyBridgeViewModel.ConnectionLog) -> some View {
-        HStack(spacing: 12) {
-            monoText("[\(connection.timestamp)]", color: .gray)
-            monoText("[\(connection.connectionProtocol)]", color: .blue)
-            monoText(connection.process, color: .green)
-            monoText("→", color: .gray)
-            monoText("\(connection.destination):\(connection.port)", color: .orange)
-            monoText("→", color: .gray)
-            monoText(connection.proxy, color: connection.proxy == "Direct" ? .gray : .purple)
-                .fontWeight(.medium)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 4)
-    }
-    
-    private func monoText(_ text: String, color: Color) -> some View {
-        Text(text)
-            .foregroundColor(color)
+        // one concatenated Text instead of an HStack of seven, far fewer view
+        // nodes to build and diff while the list streams. split into locals so
+        // the type checker doesn't choke on one giant expression
+        let ts = Text(verbatim: "[\(connection.timestamp)] ").foregroundColor(.gray)
+        let proto = Text(verbatim: "[\(connection.connectionProtocol)] ").foregroundColor(.blue)
+        let proc = Text(verbatim: connection.process).foregroundColor(.green)
+        let arrow1 = Text(verbatim: " → ").foregroundColor(.gray)
+        let dest = Text(verbatim: "\(connection.destination):\(connection.port)").foregroundColor(.orange)
+        let arrow2 = Text(verbatim: " → ").foregroundColor(.gray)
+        let proxy = Text(verbatim: connection.proxy).foregroundColor(connection.proxy == "Direct" ? .gray : .purple)
+        return (ts + proto + proc + arrow1 + dest + arrow2 + proxy)
             .font(.system(.body, design: .monospaced))
+            .padding(.horizontal)
+            .padding(.vertical, 4)
     }
-    
+
     private func scrollToLast(proxy: ScrollViewProxy) {
         // no animation, this fires on every poll and animating a long list burns cpu
         if let last = connections.last {
@@ -213,21 +209,16 @@ struct ActivityLogsView: View {
     }
     
     private func logRow(_ log: ProxyBridgeViewModel.ActivityLog) -> some View {
-        HStack(spacing: 12) {
-            monoText("[\(log.timestamp)]", color: .gray)
-            monoText("[\(log.level)]", color: log.level == "ERROR" ? .red : .blue)
-            monoText(log.message, color: .primary)
-        }
+        (
+            Text(verbatim: "[\(log.timestamp)] ").foregroundColor(.gray)
+            + Text(verbatim: "[\(log.level)] ").foregroundColor(log.level == "ERROR" ? .red : .blue)
+            + Text(verbatim: log.message).foregroundColor(.primary)
+        )
+        .font(.system(.body, design: .monospaced))
         .padding(.horizontal)
         .padding(.vertical, 4)
     }
-    
-    private func monoText(_ text: String, color: Color) -> some View {
-        Text(text)
-            .foregroundColor(color)
-            .font(.system(.body, design: .monospaced))
-    }
-    
+
     private func scrollToLast(proxy: ScrollViewProxy) {
         // no animation, this fires on every poll and animating a long list burns cpu
         if let last = logs.last {

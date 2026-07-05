@@ -31,7 +31,7 @@ struct ProxySettingsView: View {
             Button("Cancel", role: .cancel) { deletingConfig = nil }
         } message: {
             if affectedRulesCount > 0 {
-                Text("\(affectedRulesCount) rule\(affectedRulesCount == 1 ? "" : "s") use this proxy and will be set to Direct.")
+                Text(verbatim: "\(affectedRulesCount) rule\(affectedRulesCount == 1 ? "" : "s") use this proxy and will be set to Direct.")
             } else {
                 Text("This proxy will be permanently removed.")
             }
@@ -99,7 +99,9 @@ struct ProxySettingsView: View {
                 .width(70)
 
                 TableColumn("Server") { config in
-                    Text("\(config.host):\(config.port)")
+                    // build the string first, interpolating an Int into a Text
+                    // literal would add a locale grouping separator (1,080)
+                    Text(verbatim: "\(config.host):\(String(config.port))")
                         .fontDesign(.monospaced)
                 }
                 .width(min: 180, ideal: 220, max: .infinity)

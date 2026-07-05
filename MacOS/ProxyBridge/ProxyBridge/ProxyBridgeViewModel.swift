@@ -14,9 +14,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private var logTimer: Timer?
     @Published private(set) var proxyConfigs: [ProxyConfig] = []
     
-    private let maxLogEntries = 1000
+    private let maxLogEntries = 500
     // trim back to this when the cap is hit, so we don't shift on every entry
-    private let trimToEntries = 800
+    private let trimToEntries = 400
     private let logPollingInterval = 1.0
     private let extensionIdentifier = "com.interceptsuite.ProxyBridge.extension"
     private let timestampFormatter: DateFormatter = {

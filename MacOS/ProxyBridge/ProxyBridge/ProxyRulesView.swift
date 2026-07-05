@@ -167,7 +167,7 @@ struct ProxyRulesView: View {
                 Spacer()
             } else {
                 Table(rules) {
-                    TableColumn("Select") { rule in
+                    TableColumn("") { rule in
                         Toggle("", isOn: Binding(
                             get: { selectedRuleIds.contains(rule.id) },
                             set: { isSelected in
@@ -181,80 +181,79 @@ struct ProxyRulesView: View {
                         .toggleStyle(.checkbox)
                         .labelsHidden()
                     }
-                    .width(60)
-                    
-                    TableColumn("Enabled") { rule in
+                    .width(32)
+
+                    TableColumn("On") { rule in
                         Toggle("", isOn: binding(for: rule))
                             .toggleStyle(.switch)
                             .labelsHidden()
                     }
-                    .width(60)
-                    
-                    TableColumn("Actions") { rule in
-                        HStack(spacing: 8) {
+                    .width(44)
+
+                    TableColumn("") { rule in
+                        HStack(spacing: 12) {
                             Button(action: { editingRule = rule }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "pencil")
-                                    Text("Edit")
-                                }
+                                Image(systemName: "pencil")
                             }
                             .buttonStyle(.borderless)
                             .foregroundColor(.blue)
-                            
+                            .help("Edit")
+
                             Button(action: { deleteRule(rule) }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "trash")
-                                    Text("Delete")
-                                }
+                                Image(systemName: "trash")
                             }
                             .buttonStyle(.borderless)
                             .foregroundColor(.red)
+                            .help("Delete")
                         }
                     }
-                    .width(140)
-                    
+                    .width(60)
+
                     TableColumn("SR") { rule in
-                        Text("\((rules.firstIndex(where: { $0.id == rule.id }) ?? 0) + 1)")
+                        let index = (rules.firstIndex(where: { $0.id == rule.id }) ?? 0) + 1
+                        Text(verbatim: "\(index)")
                     }
-                    .width(40)
+                    .width(32)
 
                     TableColumn("Name") { rule in
                         Text(rule.name.isEmpty ? "—" : rule.name)
                             .foregroundColor(rule.name.isEmpty ? .secondary : .primary)
                     }
-                    .width(140)
+                    .width(min: 90, ideal: 120)
 
                     TableColumn("Bundle ID") { rule in
                         Text(rule.processNames.isEmpty ? "Any" : rule.processNames)
                     }
-                    .width(150)
-                    
+                    .width(min: 100, ideal: 140)
+
                     TableColumn("Target Hosts") { rule in
                         Text(rule.targetHosts.isEmpty ? "Any" : rule.targetHosts)
                     }
-                        .width(180)
-                    
+                    .width(min: 100, ideal: 150)
+
                     TableColumn("Target Ports") { rule in
                         Text(rule.targetPorts.isEmpty ? "Any" : rule.targetPorts)
                     }
-                    .width(120)
-                    
+                    .width(min: 70, ideal: 100)
+
                     TableColumn("Protocol") { rule in
                         Text(rule.ruleProtocol)
                     }
-                    .width(80)
-                    
+                    .width(64)
+
                     TableColumn("Action") { rule in
                         Text(actionDisplayName(rule.action))
                             .foregroundColor(actionColor(rule.action))
                             .fontWeight(.semibold)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                    .width(160)
+                    .width(min: 120, ideal: 160)
                 }
                 .padding()
             }
         }
-        .frame(minWidth: 1200, minHeight: 600)
+        .frame(minWidth: 900, minHeight: 500)
         .onAppear {
             loadRules()
         }
