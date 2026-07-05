@@ -168,6 +168,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private func profileConfigsKey(_ name: String) -> String { "profile.\(name).proxyConfigs" }
     private func profileRulesKey(_ name: String) -> String { "profile.\(name).proxyRules" }
     private func profileLoggingKey(_ name: String) -> String { "profile.\(name).trafficLoggingEnabled" }
+    private func profileCloseKey(_ name: String) -> String { "profile.\(name).closeToMenuBar" }
+    private func profileStartupKey(_ name: String) -> String { "profile.\(name).runAtStartup" }
 
     private func loadProfiles() {
         let d = UserDefaults.standard
@@ -189,6 +191,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.set(d.data(forKey: "proxyConfigs"), forKey: profileConfigsKey(name))
         d.set(d.array(forKey: "proxyRules"), forKey: profileRulesKey(name))
         d.set(isTrafficLoggingEnabled, forKey: profileLoggingKey(name))
+        d.set(d.bool(forKey: "closeToMenuBar"), forKey: profileCloseKey(name))
+        d.set(d.bool(forKey: "runAtStartup"), forKey: profileStartupKey(name))
     }
 
     // load a profile's snapshot into the live working keys
@@ -201,14 +205,18 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         }
         d.set(d.array(forKey: profileRulesKey(name)) ?? [], forKey: "proxyRules")
         // traffic logging is per profile, default on when the snapshot has none
-        let logging = d.object(forKey: profileLoggingKey(name)) as? Bool ?? true
-        d.set(logging, forKey: "trafficLoggingEnabled")
+        d.set(d.object(forKey: profileLoggingKey(name)) as? Bool ?? true, forKey: "trafficLoggingEnabled")
+        // window + startup behaviour are per profile too, default off
+        d.set(d.object(forKey: profileCloseKey(name)) as? Bool ?? false, forKey: "closeToMenuBar")
+        d.set(d.object(forKey: profileStartupKey(name)) as? Bool ?? false, forKey: "runAtStartup")
     }
 
     // reload in-memory state from the working keys and push it to the extension
     private func applyActiveProfile() {
         loadProxyConfig()
         loadTrafficLoggingSetting()
+        // window-close behaviour is read live from the key, only startup needs applying
+        LoginItem.applyToSystem(UserDefaults.standard.bool(forKey: "runAtStartup"))
         if let session = tunnelSession {
             sendProxyConfigsToExtension(session: session)
             RuleManager.resyncRules(session: session) { _, _ in }
@@ -246,9 +254,13 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.set(d.data(forKey: profileConfigsKey(old)), forKey: profileConfigsKey(new))
         d.set(d.array(forKey: profileRulesKey(old)), forKey: profileRulesKey(new))
         d.set(d.object(forKey: profileLoggingKey(old)), forKey: profileLoggingKey(new))
+        d.set(d.object(forKey: profileCloseKey(old)), forKey: profileCloseKey(new))
+        d.set(d.object(forKey: profileStartupKey(old)), forKey: profileStartupKey(new))
         d.removeObject(forKey: profileConfigsKey(old))
         d.removeObject(forKey: profileRulesKey(old))
         d.removeObject(forKey: profileLoggingKey(old))
+        d.removeObject(forKey: profileCloseKey(old))
+        d.removeObject(forKey: profileStartupKey(old))
         if let i = profiles.firstIndex(of: old) { profiles[i] = new }
         d.set(profiles, forKey: "profiles")
         if activeProfile == old {
@@ -267,6 +279,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.removeObject(forKey: profileConfigsKey(name))
         d.removeObject(forKey: profileRulesKey(name))
         d.removeObject(forKey: profileLoggingKey(name))
+        d.removeObject(forKey: profileCloseKey(name))
+        d.removeObject(forKey: profileStartupKey(name))
         profiles.removeAll { $0 == name }
         d.set(profiles, forKey: "profiles")
     }
@@ -282,6 +296,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         let dict: [String: Any] = [
             "name": name,
             "trafficLoggingEnabled": d.object(forKey: profileLoggingKey(name)) as? Bool ?? true,
+            "closeToMenuBar": d.object(forKey: profileCloseKey(name)) as? Bool ?? false,
+            "runAtStartup": d.object(forKey: profileStartupKey(name)) as? Bool ?? false,
             "proxyConfigs": configsJSON,
             "proxyRules": d.array(forKey: profileRulesKey(name)) ?? []
         ]
@@ -307,6 +323,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         }
         d.set(obj["proxyRules"] as? [[String: Any]] ?? [], forKey: profileRulesKey(name))
         d.set(obj["trafficLoggingEnabled"] as? Bool ?? true, forKey: profileLoggingKey(name))
+        d.set(obj["closeToMenuBar"] as? Bool ?? false, forKey: profileCloseKey(name))
+        d.set(obj["runAtStartup"] as? Bool ?? false, forKey: profileStartupKey(name))
 
         profiles.append(name)
         d.set(profiles, forKey: "profiles")

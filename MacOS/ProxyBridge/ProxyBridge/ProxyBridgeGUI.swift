@@ -1,5 +1,30 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import ServiceManagement
+
+// launch-at-login. the desired state lives in the "runAtStartup" working key so
+// it can be part of a profile, and applyToSystem keeps the real login item in sync
+enum LoginItem {
+    static var isEnabled: Bool { UserDefaults.standard.bool(forKey: "runAtStartup") }
+
+    static func setEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: "runAtStartup")
+        applyToSystem(enabled)
+    }
+
+    static func applyToSystem(_ enabled: Bool) {
+        guard #available(macOS 13.0, *) else { return }
+        do {
+            if enabled, SMAppService.mainApp.status != .enabled {
+                try SMAppService.mainApp.register()
+            } else if !enabled, SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            // registration can fail if the app isn't in /Applications, ignore
+        }
+    }
+}
 
 @main
 struct ProxyBridgeGUIApp: App {
@@ -84,6 +109,10 @@ struct ProxyBridgeGUIApp: App {
 
             CommandMenu("Settings") {
                 Toggle("Close to Menu Bar", isOn: $closeToMenuBar)
+                Toggle("Run at Startup", isOn: Binding(
+                    get: { LoginItem.isEnabled },
+                    set: { LoginItem.setEnabled($0) }
+                ))
             }
 
             CommandGroup(replacing: .help) {
@@ -208,6 +237,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     static var pendingUpdateInfo: VersionInfo?
     static weak var shared: AppDelegate?
     static weak var mainWindow: NSWindow?
+    // set at launch, tells WindowAccessor to keep the first window hidden
+    static var startHidden = false
 
     private var statusItem: NSStatusItem?
 
@@ -216,6 +247,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
         setupStatusItem()
+        // keep the real login item in sync with the active profile's setting
+        LoginItem.applyToSystem(LoginItem.isEnabled)
+
+        // a login-item / resume launch is not a "default" launch. if we got here
+        // that way and startup is enabled, come up in the menu bar with no window
+        let isDefaultLaunch = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool ?? true
+        if !isDefaultLaunch && LoginItem.isEnabled {
+            AppDelegate.startHidden = true
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     // if close-to-menu-bar is off, quitting on last window close matches the
@@ -328,6 +369,11 @@ struct WindowAccessor: NSViewRepresentable {
             guard let window = view.window else { return }
             AppDelegate.mainWindow = window
             window.delegate = AppDelegate.shared
+            // launched at login, keep it hidden in the menu bar
+            if AppDelegate.startHidden {
+                AppDelegate.startHidden = false
+                window.orderOut(nil)
+            }
         }
         return view
     }
