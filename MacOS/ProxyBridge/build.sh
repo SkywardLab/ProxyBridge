@@ -17,6 +17,24 @@ if [ ! -d "$APP_PATH" ]; then
     exit 1
 fi
 
+verify_universal() {
+    local binary="$1"
+    local archs
+    archs="$(lipo -archs "$binary" 2>/dev/null || echo "")"
+    if [[ "$archs" != *"arm64"* || "$archs" != *"x86_64"* ]]; then
+        echo "Error: $binary is not universal (found: ${archs:-none})"
+        echo "Build with ARCHS=\"arm64 x86_64\" ONLY_ACTIVE_ARCH=NO before packaging."
+        exit 1
+    fi
+    echo "  universal ok: $binary ($archs)"
+}
+
+verify_universal "$APP_PATH/Contents/MacOS/ProxyBridge"
+EXT_BIN="$APP_PATH/Contents/Library/SystemExtensions/com.interceptsuite.ProxyBridge.extension.systemextension/Contents/MacOS/com.interceptsuite.ProxyBridge.extension"
+if [ -f "$EXT_BIN" ]; then
+    verify_universal "$EXT_BIN"
+fi
+
 mkdir -p "$SCRIPT_DIR/build/component"
 
 cp -R "$APP_PATH" "$SCRIPT_DIR/build/component/"

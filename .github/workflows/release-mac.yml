@@ -97,11 +97,29 @@ jobs:
     - name: Verify Build
       run: |
         cd MacOS/ProxyBridge
+        APP="build/DerivedData/Build/Products/Release/ProxyBridge.app"
         ls -la build/DerivedData/Build/Products/Release/
-        file build/DerivedData/Build/Products/Release/ProxyBridge.app/Contents/MacOS/ProxyBridge
-        lipo -archs build/DerivedData/Build/Products/Release/ProxyBridge.app/Contents/MacOS/ProxyBridge
+
+        # hard gate: fail the release if any shipped binary is not universal.
+        # a non-universal (x86_64-only) build is what triggered the rosetta
+        # prompt on apple silicon in issue #185.
+        assert_universal() {
+          local bin="$1"
+          local archs
+          archs="$(lipo -archs "$bin")"
+          echo "archs of $bin -> $archs"
+          if [[ "$archs" != *"arm64"* || "$archs" != *"x86_64"* ]]; then
+            echo "::error::$bin is not universal (found: $archs)"
+            exit 1
+          fi
+        }
+
+        assert_universal "$APP/Contents/MacOS/ProxyBridge"
+        EXT="$APP/Contents/Library/SystemExtensions/com.interceptsuite.ProxyBridge.extension.systemextension/Contents/MacOS/com.interceptsuite.ProxyBridge.extension"
+        assert_universal "$EXT"
+
         # Verify code signature
-        codesign -dv --verbose=4 build/DerivedData/Build/Products/Release/ProxyBridge.app
+        codesign -dv --verbose=4 "$APP"
 
     - name: Notarize App
       run: |
