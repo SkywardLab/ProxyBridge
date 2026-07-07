@@ -390,6 +390,13 @@ static void RelocalizeUI(HWND hwnd)
     TCITEMW ti; ti.mask = TCIF_TEXT;
     ti.pszText = (LPWSTR)T(S_TAB_CONN); TabCtrl_SetItem(g_hTab, 0, &ti);
     ti.pszText = (LPWSTR)T(S_TAB_ACT);  TabCtrl_SetItem(g_hTab, 1, &ti);
+    // The tab strip, the Clear buttons and the search cue banners all carry localized
+    // text too - refresh them here so a language switch updates them without a restart.
+    SetWindowTextW(g_hConnClear, T(S_BTN_CLEARLOGS));
+    SetWindowTextW(g_hActClear,  T(S_BTN_CLEARLOGS));
+    SendMessageW(g_hConnSearch, EM_SETCUEBANNER, TRUE, (LPARAM)T(S_SEARCH_CUE));
+    SendMessageW(g_hActSearch,  EM_SETCUEBANNER, TRUE, (LPARAM)T(S_SEARCH_CUE));
+    InvalidateRect(g_hTab, NULL, TRUE);
     UpdateTitle();
     DrawMenuBar(hwnd);
 }
@@ -530,10 +537,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
     case WM_CREATE:
     {
-        g_hUi   = CreateFontW(-19, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+        g_hUi   = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        g_hMono = CreateFontW(-19, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+        g_hMono = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
                               FIXED_PITCH | FF_MODERN, L"Consolas");
         g_hTab = CreateWindowExW(0, WC_TABCONTROLW, NULL,
